@@ -2,84 +2,54 @@
 // // Refer to the Next.js Docs: https://nextjs.org/docs/app/building-your-application/routing/middleware
 // // Refer to Redis docs on Rate Limiting: https://upstash.com/docs/redis/sdks/ratelimit-ts/algorithms
 
-// // import { NextResponse } from "next/server";
-// // import type { NextRequest } from "next/server";
-
-// // export async function middleware(request: NextRequest) {
-// //   try {
-
-// //     const response = NextResponse.next();
-
-// //     return response;
-
-// //   } catch (error) {
-
-// //   }
-// // }
-
-// // // Configure which paths the middleware runs on
-// // export const config = {
-// //   matcher: [
-// //     /*
-// //      * Match all request paths except static files and images
-// //      */
-// //     "/((?!_next/static|_next/image|favicon.ico).*)",
-// //   ],
-// // };
-
-// import { NextResponse } from "next/server";
-// import type { NextRequest } from "next/server";
-// import { RateLimiter } from "@upstash/ratelimit";
-// import { Redis } from "@upstash/redis";
-
-// const redis = new Redis({
-//   url: process.env.UPSTASH_REDIS_URL,
-//   token: process.env.UPSTASH_REDIS_TOKEN,
-// });
-// const rateLimiter = new RateLimiter({
-//   redis,
-//   limiter: RateLimiter.fixedWindow(10, "60 s"), // 10 requests per minute
-// });
-
-// export async function middleware(request: NextRequest) {
-//   try {
-//     const ip = request.ip || "127.0.0.1"; // Fallback for local testing
-//     const { success } = await rateLimiter.limit(ip);
-
-//     if (!success) {
-//       return NextResponse.json(
-//         { error: "Rate limit exceeded. Please try again later." },
-//         { status: 429 }
-//       );
-//     }
-
-//     return NextResponse.next();
-//   } catch (error) {
-//     console.error("Middleware Error:", error);
-//     return NextResponse.json(
-//       { error: "Internal Server Error" },
-//       { status: 500 }
-//     );
-//   }
-// }
-
-// export const config = {
-//   matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
-// };
-
-// TODO: Implement the code here to add rate limiting with Redis
-// Refer to the Next.js Docs: https://nextjs.org/docs/app/building-your-application/routing/middleware
-// Refer to Redis docs on Rate Limiting: https://upstash.com/docs/redis/sdks/ratelimit-ts/algorithms
-
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import { Redis } from "@upstash/redis";
+import { Ratelimit } from "@upstash/ratelimit";
+
+const redis = new Redis({
+  url: process.env.UPSTASH_REDIS_REST_URL,
+  token: process.env.UPSTASH_REDIS_REST_TOKEN,
+});
+
+console.log("middleware Redis URL:", process.env.UPSTASH_REDIS_REST_URL);
+console.log("middleware Redis Token:", process.env.UPSTASH_REDIS_REST_TOKEN);
+
+const rateLimit = new Ratelimit({
+  redis: redis,
+  limiter: Ratelimit.slidingWindow(10, "60 s"),
+  analytics: true,
+});
+// const ratelimit = new Ratelimit({
+//   redis: Redis.fromEnv(),
+//   limiter: Ratelimit.slidingWindow(10, "60 s"),
+//   analytics: true,
+//   timeout: 10000, // 10 seconds
+// });
 
 export async function middleware(request: NextRequest) {
   try {
-    const response = NextResponse.next();
+    // const response = NextResponse.next();
+
+    const ip = request.headers.get("x-forwarded-for") ?? "127.0.0.1";
+
+    const { success, limit, reset, remaining } = await rateLimit.limit(ip);
+
+    // Return response with rate limit headers
+    const response = success
+      ? NextResponse.next()
+      : NextResponse.json({ error: "Too Many Requests" }, { status: 429 });
+
+    // Add rate limit info to response headers
+    response.headers.set("X-RateLimit-Limit", limit.toString());
+    response.headers.set("X-RateLimit-Remaining", remaining.toString());
+    response.headers.set("X-RateLimit-Reset", reset.toString());
 
     return response;
-  } catch (error) {}
+  } catch (error) {
+    console.error("Error in middleware");
+    return NextResponse.next();
+  }
 }
 
 // Configure which paths the middleware runs on
